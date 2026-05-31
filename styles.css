@@ -55,7 +55,54 @@
   height: 16px;
 }
 
-/* iframe container */
+/* embed container */
+.opencode-embed-container {
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+}
+
+.opencode-webview {
+  width: 100%;
+  height: 100%;
+  border: none;
+  background-color: var(--background-primary);
+}
+
+.opencode-drop-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.opencode-drop-overlay.is-active {
+  pointer-events: auto;
+}
+
+.opencode-drop-overlay.is-targeted {
+  background-color: hsla(var(--color-accent-hsl, 258 90% 66%) / 0.08);
+  border: 2px dashed var(--interactive-accent);
+}
+
+.opencode-drop-overlay-label {
+  display: none;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background-color: var(--background-secondary);
+  color: var(--text-muted);
+  font-size: 0.9em;
+}
+
+.opencode-drop-overlay.is-targeted .opencode-drop-overlay-label {
+  display: block;
+}
+
+/* Legacy class kept for compatibility */
 .opencode-iframe-container {
   flex: 1;
   overflow: hidden;

@@ -3,10 +3,12 @@ import { OPENCODE_VIEW_TYPE } from "../types";
 import { OPENCODE_ICON_NAME } from "../icons";
 import type OpenCodePlugin from "../main";
 import type { ServerState } from "../server/types";
+import { NoteDropBridge, type OpenCodeWebview } from "./noteDrop/NoteDropBridge";
 
 export class OpenCodeView extends ItemView {
   plugin: OpenCodePlugin;
-  private iframeEl: HTMLIFrameElement | null = null;
+  private embedEl: OpenCodeWebview | null = null;
+  private noteDropBridge: NoteDropBridge | null = null;
   private currentState: ServerState = "stopped";
   private unsubscribeStateChange: (() => void) | null = null;
 
@@ -54,14 +56,16 @@ export class OpenCodeView extends ItemView {
       this.unsubscribeStateChange = null;
     }
     
-    // Clean up iframe
-    if (this.iframeEl) {
-      const iframeUrl = this.iframeEl.src;
-      if (iframeUrl.includes("/session/")) {
-        this.plugin.setCachedIframeUrl(iframeUrl);
+    this.noteDropBridge?.detach();
+    this.noteDropBridge = null;
+
+    if (this.embedEl) {
+      const embedUrl = this.embedEl.getAttribute("src") ?? "";
+      if (embedUrl.includes("/session/")) {
+        this.plugin.setCachedIframeUrl(embedUrl);
       }
-      this.iframeEl.src = "about:blank";
-      this.iframeEl = null;
+      this.embedEl.setAttribute("src", "about:blank");
+      this.embedEl = null;
     }
   }
 
@@ -152,31 +156,36 @@ export class OpenCodeView extends ItemView {
       this.plugin.stopServer();
     });
 
-    const iframeContainer = this.contentEl.createDiv({
-      cls: "opencode-iframe-container",
+    const embedContainer = this.contentEl.createDiv({
+      cls: "opencode-embed-container",
     });
 
-    const iframeUrl = this.plugin.getStoredIframeUrl() ?? this.plugin.getServerUrl();
-    console.log("[OpenCode] Loading iframe with URL:", iframeUrl);
+    const embedUrl = this.plugin.getStoredIframeUrl() ?? this.plugin.getServerUrl();
+    console.log("[OpenCode] Loading OpenCode UI with URL:", embedUrl);
 
-    this.iframeEl = iframeContainer.createEl("iframe", {
-      cls: "opencode-iframe",
-      attr: {
-        src: iframeUrl,
-        frameborder: "0",
-        allow: "clipboard-read; clipboard-write",
-      },
+    this.embedEl = document.createElement("webview") as OpenCodeWebview;
+    this.embedEl.addClass("opencode-webview");
+    this.embedEl.setAttribute("src", embedUrl);
+    this.embedEl.setAttribute("allowpopups", "true");
+    embedContainer.appendChild(this.embedEl);
+
+    this.noteDropBridge = new NoteDropBridge(
+      this.app,
+      () => this.plugin.getProjectDirectory(),
+      () => this.embedEl
+    );
+    this.noteDropBridge.attach(embedContainer);
+    this.noteDropBridge.bindWebview(this.embedEl);
+
+    this.embedEl.addEventListener("did-fail-load", () => {
+      console.error("Failed to load OpenCode webview");
     });
 
-    this.iframeEl.addEventListener("error", () => {
-      console.error("Failed to load OpenCode iframe");
-    });
-
-    this.iframeEl.addEventListener("focus", () => {
+    this.embedEl.addEventListener("focus", () => {
       this.plugin.refreshContextForView(this);
     });
 
-    this.iframeEl.addEventListener("pointerdown", () => {
+    this.embedEl.addEventListener("pointerdown", () => {
       this.plugin.refreshContextForView(this);
     });
 
@@ -184,12 +193,18 @@ export class OpenCodeView extends ItemView {
   }
 
   getIframeUrl(): string | null {
-    return this.iframeEl?.src ?? null;
+    return this.embedEl?.getAttribute("src") ?? null;
   }
 
   setIframeUrl(url: string): void {
-    if (this.iframeEl && this.iframeEl.src !== url) {
-      this.iframeEl.src = url;
+    if (!this.embedEl) {
+      return;
+    }
+
+    const current = this.embedEl.getAttribute("src");
+    if (current !== url) {
+      this.noteDropBridge?.onWebviewNavigate();
+      this.embedEl.setAttribute("src", url);
     }
   }
 
@@ -240,14 +255,21 @@ export class OpenCodeView extends ItemView {
   }
 
   private reloadIframe(): void {
-    if (this.iframeEl) {
-      const src = this.iframeEl.src;
-      this.iframeEl.src = "about:blank";
-      setTimeout(() => {
-        if (this.iframeEl) {
-          this.iframeEl.src = src;
-        }
-      }, 100);
+    if (!this.embedEl) {
+      return;
     }
+
+    const src = this.embedEl.getAttribute("src");
+    if (!src) {
+      return;
+    }
+
+    this.noteDropBridge?.onWebviewNavigate();
+    this.embedEl.setAttribute("src", "about:blank");
+    setTimeout(() => {
+      if (this.embedEl) {
+        this.embedEl.setAttribute("src", src);
+      }
+    }, 100);
   }
 }
