@@ -1,17 +1,12 @@
 import { App, Notice, TFile } from "obsidian";
 import { OPENCODE_VIEW_TYPE } from "../../types";
-import { vaultFileToProjectPath } from "./pathUtils";
+import { getVaultRoot, vaultFileToProjectPath } from "./pathUtils";
 
 export type OpenCodeWebview = HTMLElement & {
   executeJavaScript(code: string, userGesture?: boolean): Promise<unknown>;
 };
 
 const FILE_DROP_PREFIX = "file:";
-
-function getVaultRoot(app: App): string {
-  const adapter = app.vault.adapter as { basePath?: string };
-  return adapter.basePath ?? "";
-}
 
 function getFilesFromDragTarget(app: App, event: DragEvent): TFile[] {
   const target = event.target;

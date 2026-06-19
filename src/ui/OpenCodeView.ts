@@ -3,12 +3,14 @@ import { OPENCODE_VIEW_TYPE } from "../types";
 import { OPENCODE_ICON_NAME } from "../icons";
 import type OpenCodePlugin from "../main";
 import type { ServerState } from "../server/types";
+import { FileLinkBridge } from "./fileLinks/FileLinkBridge";
 import { NoteDropBridge, type OpenCodeWebview } from "./noteDrop/NoteDropBridge";
 
 export class OpenCodeView extends ItemView {
   plugin: OpenCodePlugin;
   private embedEl: OpenCodeWebview | null = null;
   private noteDropBridge: NoteDropBridge | null = null;
+  private fileLinkBridge: FileLinkBridge | null = null;
   private currentState: ServerState = "stopped";
   private unsubscribeStateChange: (() => void) | null = null;
 
@@ -58,6 +60,8 @@ export class OpenCodeView extends ItemView {
     
     this.noteDropBridge?.detach();
     this.noteDropBridge = null;
+    this.fileLinkBridge?.detach();
+    this.fileLinkBridge = null;
 
     if (this.embedEl) {
       const embedUrl = this.embedEl.getAttribute("src") ?? "";
@@ -177,6 +181,9 @@ export class OpenCodeView extends ItemView {
     );
     this.noteDropBridge.attach(embedContainer);
     this.noteDropBridge.bindWebview(this.embedEl);
+
+    this.fileLinkBridge = new FileLinkBridge(this.app, () => this.plugin.getProjectDirectory());
+    this.fileLinkBridge.bindWebview(this.embedEl);
 
     this.embedEl.addEventListener("did-fail-load", () => {
       console.error("Failed to load OpenCode webview");
