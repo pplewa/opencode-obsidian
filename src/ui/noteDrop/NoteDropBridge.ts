@@ -1,4 +1,5 @@
 import { App, Notice, TFile } from "obsidian";
+import { OPENCODE_VIEW_TYPE } from "../../types";
 import { vaultFileToProjectPath } from "./pathUtils";
 
 export type OpenCodeWebview = HTMLElement & {
@@ -12,7 +13,23 @@ function getVaultRoot(app: App): string {
   return adapter.basePath ?? "";
 }
 
-function getFilesFromDrag(app: App): TFile[] {
+function getFilesFromDragTarget(app: App, event: DragEvent): TFile[] {
+  const target = event.target;
+  if (!(target instanceof HTMLElement)) {
+    return [];
+  }
+
+  const fileEl = target.closest(".nav-file");
+  const filePath = fileEl?.getAttribute("data-path");
+  if (!filePath) {
+    return [];
+  }
+
+  const file = app.vault.getAbstractFileByPath(filePath);
+  return file instanceof TFile ? [file] : [];
+}
+
+function getFilesFromDragManager(app: App): TFile[] {
   const draggable = (app as { dragManager?: { draggable?: DraggablePayload } }).dragManager
     ?.draggable;
   if (!draggable) {
@@ -28,6 +45,17 @@ function getFilesFromDrag(app: App): TFile[] {
     default:
       return [];
   }
+}
+
+function getFilesFromDrag(app: App, event?: DragEvent): TFile[] {
+  const fromManager = getFilesFromDragManager(app);
+  if (fromManager.length > 0) {
+    return fromManager;
+  }
+  if (event) {
+    return getFilesFromDragTarget(app, event);
+  }
+  return [];
 }
 
 type DraggablePayload =
@@ -52,28 +80,37 @@ function buildFileDropScript(paths: string[]): string {
 export class NoteDropBridge {
   private overlayEl: HTMLElement | null = null;
   private dragActive = false;
+  private pendingPaths: string[] = [];
   private webviewReady = false;
   private unregisterDocumentEvents: (() => void) | null = null;
+  private unregisterOverlayEvents: (() => void) | null = null;
 
   constructor(
     private app: App,
     private getProjectDirectory: () => string,
-    private getWebview: () => OpenCodeWebview | null
+    private getWebview: () => OpenCodeWebview | null,
+    private appendPromptReference?: (relativePath: string) => Promise<boolean>
   ) {}
 
   attach(container: HTMLElement): void {
     this.overlayEl = container.createDiv({ cls: "opencode-drop-overlay" });
-    this.overlayEl.createSpan({ cls: "opencode-drop-overlay-label", text: "Drop note to reference in chat" });
+    this.overlayEl.createSpan({
+      cls: "opencode-drop-overlay-label",
+      text: "Drop note to reference in chat",
+    });
 
     this.unregisterDocumentEvents = this.registerDragTracking();
-    this.registerOverlayEvents();
+    this.unregisterOverlayEvents = this.registerOverlayEvents();
   }
 
   detach(): void {
     this.unregisterDocumentEvents?.();
     this.unregisterDocumentEvents = null;
+    this.unregisterOverlayEvents?.();
+    this.unregisterOverlayEvents = null;
     this.overlayEl = null;
     this.dragActive = false;
+    this.pendingPaths = [];
     this.webviewReady = false;
   }
 
@@ -88,47 +125,70 @@ export class NoteDropBridge {
     this.webviewReady = false;
   }
 
+  private isOpenCodeViewOpen(): boolean {
+    return this.app.workspace.getLeavesOfType(OPENCODE_VIEW_TYPE).length > 0;
+  }
+
   private registerDragTracking(): () => void {
-    const handleDragStart = (): void => {
-      requestAnimationFrame(() => {
-        const files = getFilesFromDrag(this.app);
-        if (files.length === 0) {
-          return;
-        }
-        this.dragActive = true;
-        this.updateOverlayState(false);
-      });
+    const handleDragStart = (event: DragEvent): void => {
+      if (!this.isOpenCodeViewOpen()) {
+        return;
+      }
+
+      const files = getFilesFromDrag(this.app, event);
+      if (files.length === 0) {
+        return;
+      }
+
+      const paths = this.resolveProjectPaths(files);
+      if (paths.length === 0) {
+        return;
+      }
+
+      this.pendingPaths = paths;
+      event.dataTransfer?.setData("text/plain", `${FILE_DROP_PREFIX}${paths[0]}`);
+
+      this.dragActive = true;
+      this.updateOverlayState(false);
+
+      if (paths.length > 1) {
+        new Notice(
+          "Multiple notes were dragged; only the first will be referenced. Drop one note at a time to reference each file.",
+          5000
+        );
+      }
     };
 
     const handleDragEnd = (): void => {
       this.dragActive = false;
+      this.pendingPaths = [];
       this.updateOverlayState(false);
     };
 
-    document.addEventListener("dragstart", handleDragStart, true);
-    document.addEventListener("dragend", handleDragEnd, true);
+    document.addEventListener("dragstart", handleDragStart, false);
+    document.addEventListener("dragend", handleDragEnd, false);
 
     return () => {
-      document.removeEventListener("dragstart", handleDragStart, true);
-      document.removeEventListener("dragend", handleDragEnd, true);
+      document.removeEventListener("dragstart", handleDragStart, false);
+      document.removeEventListener("dragend", handleDragEnd, false);
     };
   }
 
-  private registerOverlayEvents(): void {
+  private registerOverlayEvents(): () => void {
     const overlay = this.overlayEl;
     if (!overlay) {
-      return;
+      return () => undefined;
     }
 
-    overlay.addEventListener("dragenter", (event) => {
+    const handleDragEnter = (event: DragEvent): void => {
       if (!this.dragActive) {
         return;
       }
       event.preventDefault();
       this.updateOverlayState(true);
-    });
+    };
 
-    overlay.addEventListener("dragover", (event) => {
+    const handleDragOver = (event: DragEvent): void => {
       if (!this.dragActive) {
         return;
       }
@@ -137,9 +197,9 @@ export class NoteDropBridge {
         event.dataTransfer.dropEffect = "copy";
       }
       this.updateOverlayState(true);
-    });
+    };
 
-    overlay.addEventListener("dragleave", (event) => {
+    const handleDragLeave = (event: DragEvent): void => {
       if (!this.dragActive) {
         return;
       }
@@ -147,15 +207,31 @@ export class NoteDropBridge {
         return;
       }
       this.updateOverlayState(false);
-    });
+    };
 
-    overlay.addEventListener("drop", (event) => {
+    const handleDrop = (event: DragEvent): void => {
+      if (!this.dragActive || this.pendingPaths.length === 0) {
+        return;
+      }
       event.preventDefault();
       event.stopPropagation();
       this.dragActive = false;
       this.updateOverlayState(false);
-      void this.handleDrop();
-    });
+      void this.handleDrop(this.pendingPaths);
+      this.pendingPaths = [];
+    };
+
+    overlay.addEventListener("dragenter", handleDragEnter);
+    overlay.addEventListener("dragover", handleDragOver);
+    overlay.addEventListener("dragleave", handleDragLeave);
+    overlay.addEventListener("drop", handleDrop);
+
+    return () => {
+      overlay.removeEventListener("dragenter", handleDragEnter);
+      overlay.removeEventListener("dragover", handleDragOver);
+      overlay.removeEventListener("dragleave", handleDragLeave);
+      overlay.removeEventListener("drop", handleDrop);
+    };
   }
 
   private updateOverlayState(highlight: boolean): void {
@@ -164,6 +240,7 @@ export class NoteDropBridge {
       return;
     }
 
+    overlay.toggleClass("is-visible", this.dragActive);
     overlay.toggleClass("is-active", this.dragActive);
     overlay.toggleClass("is-targeted", this.dragActive && highlight);
   }
@@ -193,13 +270,7 @@ export class NoteDropBridge {
     return paths;
   }
 
-  private async handleDrop(): Promise<void> {
-    const files = getFilesFromDrag(this.app);
-    if (files.length === 0) {
-      return;
-    }
-
-    const paths = this.resolveProjectPaths(files);
+  private async handleDrop(paths: string[]): Promise<void> {
     if (paths.length === 0) {
       return;
     }
@@ -217,9 +288,18 @@ export class NoteDropBridge {
 
     try {
       await webview.executeJavaScript(buildFileDropScript(paths), true);
+      return;
     } catch (error) {
-      console.error("[OpenCode] Failed to inject file reference(s)", error);
-      new Notice("Could not add note reference to OpenCode chat.", 5000);
+      console.warn("[OpenCode] File drop injection failed, trying append-prompt", error);
     }
+
+    if (this.appendPromptReference) {
+      const appended = await this.appendPromptReference(paths[0]);
+      if (appended) {
+        return;
+      }
+    }
+
+    new Notice("Could not add note reference to OpenCode chat.", 5000);
   }
 }

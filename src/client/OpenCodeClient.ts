@@ -62,6 +62,24 @@ export class OpenCodeClient {
     this.lastPart = null;
   }
 
+  async appendPromptReference(relativePath: string): Promise<boolean> {
+    const text = `@${relativePath}`;
+    try {
+      const response = await fetch(`${this.apiBaseUrl}/tui/append-prompt`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-opencode-directory": this.projectDirectory,
+        },
+        body: JSON.stringify({ text }),
+      });
+      return response.ok;
+    } catch (error) {
+      console.error("[OpenCode] append-prompt failed:", error);
+      return false;
+    }
+  }
+
   async initializeProject(): Promise<boolean> {
     try {
       const url = `${this.apiBaseUrl}/session?directory=${encodeURIComponent(this.projectDirectory)}`;

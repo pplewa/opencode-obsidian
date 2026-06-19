@@ -172,7 +172,8 @@ export class OpenCodeView extends ItemView {
     this.noteDropBridge = new NoteDropBridge(
       this.app,
       () => this.plugin.getProjectDirectory(),
-      () => this.embedEl
+      () => this.embedEl,
+      (path) => this.plugin.getClient().appendPromptReference(path)
     );
     this.noteDropBridge.attach(embedContainer);
     this.noteDropBridge.bindWebview(this.embedEl);

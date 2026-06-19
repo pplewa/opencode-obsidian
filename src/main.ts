@@ -276,6 +276,10 @@ export default class OpenCodePlugin extends Plugin {
     await this.viewManager.ensureSessionUrl(view);
   }
 
+  getClient(): OpenCodeClient {
+    return this.openCodeClient;
+  }
+
   getProjectDirectory(): string {
     if (this.settings.projectDirectory) {
       console.log("[OpenCode] Using project directory from settings:", this.settings.projectDirectory);

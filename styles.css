@@ -1,5 +1,10 @@
 /* OpenCode Plugin Styles */
 
+.workspace-leaf-content[data-type="opencode-view"] .view-content {
+  height: 100%;
+  padding: 0;
+}
+
 /* Main container */
 .opencode-container {
   display: flex;
@@ -84,7 +89,7 @@
   pointer-events: auto;
 }
 
-.opencode-drop-overlay.is-targeted {
+.opencode-drop-overlay.is-visible.is-targeted {
   background-color: hsla(var(--color-accent-hsl, 258 90% 66%) / 0.08);
   border: 2px dashed var(--interactive-accent);
 }
@@ -98,7 +103,7 @@
   font-size: 0.9em;
 }
 
-.opencode-drop-overlay.is-targeted .opencode-drop-overlay-label {
+.opencode-drop-overlay.is-visible.is-targeted .opencode-drop-overlay-label {
   display: block;
 }
 
