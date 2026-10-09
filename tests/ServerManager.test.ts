@@ -27,6 +27,7 @@ function createTestSettings(port: number): OpenCodeSettings {
     maxSelectionLength: 2000,
     customCommand: "",
     useCustomCommand: false,
+    serverPassword: "test-password",
   };
 }
 
@@ -81,17 +82,15 @@ describe("ServerManager", () => {
       expect(stateHistory).toContain("running");
     }, 30000); // Increased timeout for database migration on first run
 
-     test("reports correct server URL with encoded project directory", async () => {
+     test("reports the server root URL", async () => {
        const port = getNextPort();
        const settings = createTestSettings(port);
 
        currentManager = new ServerManager(settings, PROJECT_DIR);
 
       const url = currentManager.getUrl();
-      const expectedBase = `http://127.0.0.1:${port}`;
-      const expectedPath = Buffer.from(PROJECT_DIR).toString('base64');
 
-      expect(url).toBe(`${expectedBase}/${expectedPath}`);
+      expect(url).toBe(`http://127.0.0.1:${port}`);
     });
 
      test("stops server gracefully and transitions to stopped state", async () => {
@@ -190,16 +189,121 @@ describe("ServerManager", () => {
 
       await currentManager.start();
 
-      // Verify we can hit the health endpoint
+      // Verify we can hit the server root (open mode waives authentication)
       const url = currentManager.getUrl();
-      const healthUrl = `${url}/global/health`;
 
-      const response = await fetch(healthUrl, {
+      const response = await fetch(url, {
         signal: AbortSignal.timeout(2000),
       });
 
       expect(response.ok).toBe(true);
     });
+
+     test("passes the configured password to the server", async () => {
+       const port = getNextPort();
+       const settings = createTestSettings(port);
+       settings.serverPassword = "integration-secret";
+
+       currentManager = new ServerManager(settings, PROJECT_DIR);
+
+      await currentManager.start();
+
+      expect(currentManager.getPassword()).toBe("integration-secret");
+
+      // The API must accept the password the plugin pinned via the environment.
+      const token = Buffer.from(`opencode:${settings.serverPassword}`).toString("base64");
+      const response = await fetch(`${currentManager.getUrl()}/api/info`, {
+        headers: { Authorization: `Basic ${token}` },
+        signal: AbortSignal.timeout(5000),
+      });
+
+      expect(response.status).toBe(200);
+      const info = (await response.json()) as { version?: string };
+      expect(info.version).toBeDefined();
+    });
+  });
+
+  describe("password mismatch", () => {
+    test("reports an error when a server on the port rejects the configured password", async () => {
+      const port = getNextPort();
+      const otherPassword = "someone-elses-password";
+      const otherToken = Buffer.from(`opencode:${otherPassword}`).toString("base64");
+
+      const server = Bun.spawn(
+        ["opencode", "serve", "--port", String(port), "--hostname", "127.0.0.1"],
+        {
+          env: { ...process.env, OPENCODE_SERVER_PASSWORD: otherPassword },
+          stdout: "pipe",
+          stderr: "pipe",
+        }
+      );
+
+      try {
+        const deadline = Date.now() + 20000;
+        let up = false;
+        while (Date.now() < deadline) {
+          try {
+            const response = await fetch(`http://127.0.0.1:${port}/api/info`, {
+              headers: { Authorization: `Basic ${otherToken}` },
+              signal: AbortSignal.timeout(1000),
+            });
+            if (response.ok) {
+              up = true;
+              break;
+            }
+          } catch {
+            // not listening yet
+          }
+          await new Promise((resolve) => setTimeout(resolve, 300));
+        }
+        expect(up).toBe(true);
+
+        const settings = createTestSettings(port);
+        settings.serverPassword = "different-password";
+        const manager = new ServerManager(settings, PROJECT_DIR);
+
+        const success = await manager.start();
+
+        expect(success).toBe(false);
+        expect(manager.getState()).toBe("error");
+        expect(manager.getLastError()).toContain("rejected the configured password");
+      } finally {
+        server.kill();
+        await server.exited;
+      }
+    }, 40000);
+  });
+
+  describe("custom command that pins a different password", () => {
+    test("fails cleanly and does not leave the server running", async () => {
+      const port = getNextPort();
+      const settings = createTestSettings(port);
+      settings.startupTimeout = 4000;
+      settings.useCustomCommand = true;
+      settings.serverPassword = "plugin-password";
+      settings.customCommand = `OPENCODE_SERVER_PASSWORD=other-secret opencode serve --port ${port} --hostname 127.0.0.1`;
+
+      const manager = new ServerManager(settings, PROJECT_DIR);
+
+      const success = await manager.start();
+
+      expect(success).toBe(false);
+      expect(manager.getState()).toBe("error");
+      expect(manager.getLastError()).toContain("rejected the configured password");
+
+      // The failed start must not leak the process it spawned.
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      let stillListening = false;
+      try {
+        const response = await fetch(`http://127.0.0.1:${port}`, {
+          signal: AbortSignal.timeout(1500),
+        });
+        stillListening = response.ok || response.status === 401;
+      } catch {
+        stillListening = false;
+      }
+      expect(stillListening).toBe(false);
+    }, 30000);
   });
 
   describe("async stop behavior", () => {
@@ -254,7 +358,7 @@ describe("ServerManager", () => {
       await new Promise((resolve) => setTimeout(resolve, 1000));
 
       try {
-        const response = await fetch(`${url}/global/health`, {
+        const response = await fetch(url, {
           signal: AbortSignal.timeout(1000),
         });
         // If we get here, server is still running - test should fail
@@ -286,36 +390,12 @@ describe("ServerManager", () => {
     });
   });
 
-  describe("Unicode path support", () => {
-    test("getUrl handles Chinese characters in project directory", () => {
+  describe("server URL", () => {
+    test("getUrl returns the server root", () => {
       const settings = createTestSettings(getNextPort());
-      const chinesePath = "C:/用户/Notes";
-      const manager = new ServerManager(settings, chinesePath);
+      const manager = new ServerManager(settings, "/home/user/\u{1F4C1}Notes");
 
-      const url = manager.getUrl();
-
-      expect(url).toContain("http://127.0.0.1:");
-      expect(url).toContain(Buffer.from(chinesePath).toString('base64'));
-    });
-
-    test("getUrl handles Japanese characters in project directory", () => {
-      const settings = createTestSettings(getNextPort());
-      const japanesePath = "/home/ユーザー/ノート";
-      const manager = new ServerManager(settings, japanesePath);
-
-      const url = manager.getUrl();
-
-      expect(url).toContain(Buffer.from(japanesePath).toString('base64'));
-    });
-
-    test("getUrl handles emoji in project directory", () => {
-      const settings = createTestSettings(getNextPort());
-      const emojiPath = "/home/user/📁Notes";
-      const manager = new ServerManager(settings, emojiPath);
-
-      const url = manager.getUrl();
-
-      expect(url).toContain(Buffer.from(emojiPath).toString('base64'));
+      expect(manager.getUrl()).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
     });
   });
 });

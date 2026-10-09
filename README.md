@@ -18,8 +18,18 @@ _Note: plugin author is not afiliated with OpenCode or Obsidian - this is a 3rd 
 ## Requirements
 
 - Desktop only (uses Node.js child processes)
-- [OpenCode CLI](https://opencode.ai) installed 
+- [OpenCode CLI](https://opencode.ai) v2 or later installed
 - [Bun](https://bun.sh) installed
+
+## Server password
+
+OpenCode v2 requires every client to authenticate. The plugin generates a password on first run, passes it to the server as `OPENCODE_SERVER_PASSWORD`, and reuses it for the embedded web view. You can view or rotate the password in Settings under **Server password**.
+
+If you start the server outside the plugin, set the same password before you start it:
+
+```bash
+OPENCODE_SERVER_PASSWORD=<password> opencode serve --port 14096 --hostname 127.0.0.1
+```
 
 ## Installation
 

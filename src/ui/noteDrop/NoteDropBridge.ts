@@ -4,6 +4,7 @@ import { getVaultRoot, vaultFileToProjectPath } from "./pathUtils";
 
 export type OpenCodeWebview = HTMLElement & {
   executeJavaScript(code: string, userGesture?: boolean): Promise<unknown>;
+  reload(): void;
 };
 
 const FILE_DROP_PREFIX = "file:";
@@ -83,8 +84,7 @@ export class NoteDropBridge {
   constructor(
     private app: App,
     private getProjectDirectory: () => string,
-    private getWebview: () => OpenCodeWebview | null,
-    private appendPromptReference?: (relativePath: string) => Promise<boolean>
+    private getWebview: () => OpenCodeWebview | null
   ) {}
 
   attach(container: HTMLElement): void {
@@ -283,18 +283,9 @@ export class NoteDropBridge {
 
     try {
       await webview.executeJavaScript(buildFileDropScript(paths), true);
-      return;
     } catch (error) {
-      console.warn("[OpenCode] File drop injection failed, trying append-prompt", error);
+      console.warn("[OpenCode] File drop injection failed", error);
+      new Notice("Could not add note reference to OpenCode chat.", 5000);
     }
-
-    if (this.appendPromptReference) {
-      const appended = await this.appendPromptReference(paths[0]);
-      if (appended) {
-        return;
-      }
-    }
-
-    new Notice("Could not add note reference to OpenCode chat.", 5000);
   }
 }

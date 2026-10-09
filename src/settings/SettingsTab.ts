@@ -15,6 +15,12 @@ function expandTilde(path: string): string {
   return path;
 }
 
+function generatePassword(): string {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return Buffer.from(bytes).toString("base64url");
+}
+
 export class OpenCodeSettingTab extends PluginSettingTab {
   private validateTimeout: ReturnType<typeof setTimeout> | null = null;
 
@@ -62,6 +68,31 @@ export class OpenCodeSettingTab extends PluginSettingTab {
             await this.onSettingsChange();
           })
       );
+
+    new Setting(containerEl)
+      .setName("Server password")
+      .setDesc(
+        "OpenCode v2 requires a password. The plugin passes this value to the server and reuses it for the embedded web UI."
+      )
+      .addText((text) => {
+        text.inputEl.type = "password";
+        text
+          .setValue(this.settings.serverPassword)
+          .onChange(async (value) => {
+            this.settings.serverPassword = value.trim();
+            await this.onSettingsChange();
+          });
+      })
+      .addExtraButton((button) => {
+        button
+          .setIcon("refresh-cw")
+          .setTooltip("Generate a new password")
+          .onClick(async () => {
+            this.settings.serverPassword = generatePassword();
+            await this.onSettingsChange();
+            this.display();
+          });
+      });
 
     const customCmdSetting = new Setting(containerEl)
       .setName("Use custom command")

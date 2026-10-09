@@ -13,6 +13,11 @@ export interface OpenCodeSettings {
   maxSelectionLength: number;
   customCommand: string;
   useCustomCommand: boolean;
+  /**
+   * Password for the OpenCode v2 server. The plugin passes it to the server as
+   * OPENCODE_SERVER_PASSWORD and uses it for API requests and the web UI.
+   */
+  serverPassword: string;
 }
 
 export const DEFAULT_SETTINGS: OpenCodeSettings = {
@@ -28,6 +33,7 @@ export const DEFAULT_SETTINGS: OpenCodeSettings = {
   maxSelectionLength: 2000,
   customCommand: "",
   useCustomCommand: false,
+  serverPassword: "",
 };
 
 export const OPENCODE_VIEW_TYPE = "opencode-view";
