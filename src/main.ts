@@ -9,6 +9,16 @@ import { OpenCodeClient } from "./client/OpenCodeClient";
 import { ContextManager } from "./context/ContextManager";
 import { ExecutableResolver } from "./server/ExecutableResolver";
 
+/**
+ * Random password for the OpenCode server. The plugin passes this value to the
+ * server, so it stays stable between restarts and the web UI stays connected.
+ */
+function generateServerPassword(): string {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return Buffer.from(bytes).toString("base64url");
+}
+
 export default class OpenCodePlugin extends Plugin {
   settings: OpenCodeSettings = DEFAULT_SETTINGS;
   private processManager: ServerManager;
@@ -48,8 +58,8 @@ export default class OpenCodePlugin extends Plugin {
     });
 
     this.openCodeClient = new OpenCodeClient(
-      this.getApiBaseUrl(),
       this.getServerUrl(),
+      this.getServerPassword(),
       projectDirectory
     );
     this.lastBaseUrl = this.getServerUrl();
@@ -155,6 +165,11 @@ export default class OpenCodePlugin extends Plugin {
 
   async loadSettings(): Promise<void> {
     this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+
+    if (!this.settings.serverPassword) {
+      this.settings.serverPassword = generateServerPassword();
+      await this.saveData(this.settings);
+    }
   }
 
   /**
@@ -195,6 +210,8 @@ export default class OpenCodePlugin extends Plugin {
     const success = await this.processManager.start();
     if (success) {
       new Notice("OpenCode server started");
+      // The server may have reported its own password during startup.
+      this.refreshClientState();
       const initialized = await this.openCodeClient.initializeProject();
       if (!initialized) {
         console.warn("[OpenCode] Failed to initialize project on server");
@@ -227,8 +244,8 @@ export default class OpenCodePlugin extends Plugin {
     return this.processManager.getUrl();
   }
 
-  getApiBaseUrl(): string {
-    return `http://${this.settings.hostname}:${this.settings.port}`;
+  getServerPassword(): string {
+    return this.processManager.getPassword();
   }
 
   getStoredIframeUrl(): string | null {
@@ -257,9 +274,12 @@ export default class OpenCodePlugin extends Plugin {
 
   private refreshClientState(): void {
     const nextUiBaseUrl = this.getServerUrl();
-    const nextApiBaseUrl = this.getApiBaseUrl();
     const projectDirectory = this.getProjectDirectory();
-    this.openCodeClient.updateBaseUrl(nextApiBaseUrl, nextUiBaseUrl, projectDirectory);
+    this.openCodeClient.updateBaseUrl(
+      nextUiBaseUrl,
+      this.getServerPassword(),
+      projectDirectory
+    );
 
     if (this.lastBaseUrl && this.lastBaseUrl !== nextUiBaseUrl) {
       this.cachedIframeUrl = null;

@@ -5,6 +5,7 @@ import type OpenCodePlugin from "../main";
 import type { ServerState } from "../server/types";
 import { FileLinkBridge } from "./fileLinks/FileLinkBridge";
 import { NoteDropBridge, type OpenCodeWebview } from "./noteDrop/NoteDropBridge";
+import { buildAuthSeedScript } from "./authSeed";
 
 export class OpenCodeView extends ItemView {
   plugin: OpenCodePlugin;
@@ -176,11 +177,14 @@ export class OpenCodeView extends ItemView {
     this.noteDropBridge = new NoteDropBridge(
       this.app,
       () => this.plugin.getProjectDirectory(),
-      () => this.embedEl,
-      (path) => this.plugin.getClient().appendPromptReference(path)
+      () => this.embedEl
     );
     this.noteDropBridge.attach(embedContainer);
     this.noteDropBridge.bindWebview(this.embedEl);
+
+    this.embedEl.addEventListener("dom-ready", () => {
+      void this.seedServerCredentials();
+    });
 
     this.fileLinkBridge = new FileLinkBridge(this.app, () => this.plugin.getProjectDirectory());
     this.fileLinkBridge.bindWebview(this.embedEl);
@@ -202,6 +206,36 @@ export class OpenCodeView extends ItemView {
 
   getIframeUrl(): string | null {
     return this.embedEl?.getAttribute("src") ?? null;
+  }
+
+  /**
+   * Give the OpenCode web UI the server password before it finishes booting.
+   *
+   * The credential lives in localStorage, so it can only be written once the
+   * document exists. When the write lands after startup, reload once to pick it
+   * up. The second pass finds a matching value and does not reload again.
+   */
+  private async seedServerCredentials(): Promise<void> {
+    const webview = this.embedEl;
+    if (!webview) {
+      return;
+    }
+
+    const password = this.plugin.getServerPassword();
+    if (!password) {
+      return;
+    }
+
+    try {
+      const changed = await webview.executeJavaScript(
+        buildAuthSeedScript(this.plugin.getServerUrl(), password)
+      );
+      if (changed === true && this.embedEl === webview) {
+        webview.reload();
+      }
+    } catch (error) {
+      console.warn("[OpenCode] Failed to seed server credentials", error);
+    }
   }
 
   setIframeUrl(url: string): void {
